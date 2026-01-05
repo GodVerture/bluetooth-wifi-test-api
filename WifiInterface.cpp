@@ -26,6 +26,26 @@ WifiInterface::WifiInterface(const std::string &staInterface, const std::string 
 
 WifiInterface::~WifiInterface()
 {
+#ifndef _WIN32
+    if (connectionStatus_ == ConnectionStatus::CONNECTED)
+    {
+        disconnect();
+    }
+
+    if (isAPRunning_)
+    {
+        stopAP();
+    }
+
+    if (wpaSupplicantPid_ > 0)
+    {
+        stopWpaSupplicant();
+    }
+
+    disableSTAInterface();
+    disableAPInterface();
+
+#endif // _WIN32
 }
 std::string WifiInterface::executeCommand(const std::string &command)
 {
@@ -55,6 +75,43 @@ bool WifiInterface::executeCommandWithResult(const std::string &command)
     return (result == 0);
 #else
     return true;
+#endif // _WIN32
+}
+
+std::string WifiInterface::decodeHexString(const std::string &hexString)
+{
+    std::string result = "";
+    size_t pos = 0;
+    // printf("hexString: %s\n", hexString.c_str());
+#ifndef _WIN32
+    while (pos < hexString.length())
+    {
+        if (hexString.substr(pos, 2) == "\\x" && pos + 3 < hexString.length())
+        {
+            std::string hexByte = hexString.substr(pos + 2, 2);
+            try
+            {
+                int byteValue = std::stoi(hexByte, nullptr, 16);
+                result += static_cast<char>(byteValue);
+                pos += 4; // 跳过 "\\x" 和 2个十六进制字符
+            }
+            catch (...)
+            {
+                // 转换失败,保留原字符
+                result += hexString[pos];
+                pos++;
+            }
+        }
+        else
+        {
+            result += hexString[pos];
+            pos++;
+        }
+    }
+    // printf("decodeHexString: %s\n", result.c_str());
+    return result;
+#else
+    return result;
 #endif // _WIN32
 }
 
@@ -174,6 +231,18 @@ bool WifiInterface::setOperationMode(WifiMode mode)
         enableSTAInterface();
         disableAPInterface();
         success = startWpaSupplicant();
+        if (success)
+        {
+            sleep(2);
+            if (autoConnectToSavedNetworks())
+            {
+                std::cout << "Auto connect to saved networks success." << std::endl;
+            }
+            else
+            {
+                std::cout << "Auto connect to saved networks failed." << std::endl;
+            }
+        }
         break;
     case WifiMode::WIFI_MODE_AP:
         // 启用AP接口，禁用STA接口
@@ -186,6 +255,18 @@ bool WifiInterface::setOperationMode(WifiMode mode)
         enableAPInterface();
         enableSTAInterface();
         success = startAP() && startWpaSupplicant();
+        if (success)
+        {
+            sleep(2);
+            if (autoConnectToSavedNetworks())
+            {
+                std::cout << "Auto connect to saved networks success." << std::endl;
+            }
+            else
+            {
+                std::cout << "Auto connect to saved networks failed." << std::endl;
+            }
+        }
         break;
     case WifiMode::WIFI_MODE_ALL_OFF:
         // 关闭WiFi所有服务
@@ -363,6 +444,11 @@ bool WifiInterface::parseScanResults(const std::string &scanOutput)
 
             currentNetwork.ssid.erase(0, currentNetwork.ssid.find_first_not_of(" \t"));
             currentNetwork.ssid.erase(currentNetwork.ssid.find_last_not_of(" \t") + 1);
+            // 处理中文编码问题
+            if (currentNetwork.ssid.find("\\x") != std::string::npos)
+            {
+                currentNetwork.ssid = decodeHexString(currentNetwork.ssid);
+            }
             hasNetwork = true;
 
             // 默认设置为开放网络模式
@@ -788,17 +874,14 @@ bool WifiInterface::configureWpaSupplicant(const std::string &ssid, const std::s
 bool WifiInterface::disconnect()
 {
 #ifndef _WIN32
-    if (connectionStatus_ == ConnectionStatus::CONNECTED)
+    ConnectionStatus actualStatus = getConnectionStatus();
+    if (actualStatus == ConnectionStatus::CONNECTED)
     {
         stopWpaSupplicant();
 
         // 杀死udhcpc进程
         std::string killCommand = "killall udhcpc 2>/dev/null";
         executeCommandWithResult(killCommand);
-
-        // 释放DHCP分配的IP地址
-        std::string releaseCommand = "dhclient -r " + staInterface_;
-        executeCommandWithResult(releaseCommand);
 
         // 清除IP地址
         std::string clearIPCommand = "ip addr flush dev " + staInterface_;
@@ -964,12 +1047,6 @@ bool WifiInterface::autoConnectToSavedNetworks()
 #ifndef _WIN32
     std::cout << "Trying to automatically connect to a saved network..." << std::endl;
 
-    if (!scanNetworks())
-    {
-        std::cout << "Scanning the network failed and automatic connection could not be made." << std::endl;
-        return false;
-    }
-
     auto savedNetworks = getSavedNetworks();
     if (savedNetworks.empty())
     {
@@ -977,36 +1054,24 @@ bool WifiInterface::autoConnectToSavedNetworks()
         return false;
     }
 
-    // 按信号强度排序可用网络
     std::vector<NetworkInfo> availableNetworks;
     for (const auto &savedNetwork : savedNetworks)
     {
-        // 检查该网络是否在扫描结果中且启用了自动连接
-        auto it = std::find_if(scanResults_.begin(), scanResults_.end(),
-                               [this, &savedNetwork](const NetworkInfo &network)
-                               {
-                                   return network.ssid == savedNetwork.ssid &&
-                                          autoConnectNetworks_[savedNetwork.ssid];
-                               });
-        if (it != scanResults_.end())
+        if (savedNetwork.autoConnect)
         {
-            NetworkInfo networkToConnect = savedNetwork;
-            networkToConnect.signalStrength = it->signalStrength;
-            availableNetworks.push_back(networkToConnect);
+            availableNetworks.push_back(savedNetwork);
         }
     }
 
-    // 按信号强度排序(从强到弱)
-    std::sort(availableNetworks.begin(), availableNetworks.end(),
-              [](const NetworkInfo &a, const NetworkInfo &b)
-              {
-                  return a.signalStrength > b.signalStrength;
-              });
+    if (availableNetworks.empty())
+    {
+        std::cout << "No network with auto-connect enabled" << std::endl;
+        return false;
+    }
 
-    // 尝试连接每个可用网络
     for (const auto &network : availableNetworks)
     {
-        std::cout << "Try to connect to the network: " << network.ssid << "(Signal strength: " << network.signalStrength << " dBm)" << std::endl;
+        std::cout << "Try to connect to the network: " << network.ssid << std::endl;
 
         // 从保存的密码中获取密码
         auto passwordIt = savedPasswords_.find(network.ssid);
@@ -1016,7 +1081,6 @@ bool WifiInterface::autoConnectToSavedNetworks()
             continue;
         }
 
-        // 尝试连接
         if (connectToNetwork(network.ssid, passwordIt->second))
         {
             std::cout << "Automatic connection successful! Connect to the network: " << network.ssid << std::endl;
@@ -1028,7 +1092,7 @@ bool WifiInterface::autoConnectToSavedNetworks()
         }
     }
 
-    std::cout << "Auto-connect failed. No saved network is available." << std::endl;
+    std::cout << "Auto-connect failed. No available network could be connected." << std::endl;
     return false;
 #else
     return false;
@@ -1042,15 +1106,32 @@ ConnectionStatus WifiInterface::getConnectionStatus()
     std::string command = "iw dev " + staInterface_ + " link";
     std::string linkStatus = executeCommand(command);
 
+    if (linkStatus.empty())
+    {
+        return connectionStatus_;
+    }
+
     if (linkStatus.find("Connected") != std::string::npos)
     {
+        if (connectionStatus_ != ConnectionStatus::CONNECTED)
+        {
+            connectionStatus_ = ConnectionStatus::CONNECTED;
+        }
         return ConnectionStatus::CONNECTED;
     }
     else if (linkStatus.find("Not connected") != std::string::npos)
     {
+        if (connectionStatus_ != ConnectionStatus::DISCONNECTED)
+        {
+            connectionStatus_ = ConnectionStatus::DISCONNECTED;
+        }
         return ConnectionStatus::DISCONNECTED;
     }
-    return connectionStatus_;
+    else
+    {
+        std::cout << "Cannot determine the WiFi link status. Use internal status." << std::endl;
+        return connectionStatus_;
+    }
 #else
     return ConnectionStatus::DISCONNECTED;
 #endif // _WIN32

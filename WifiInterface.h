@@ -304,6 +304,12 @@ private:
 
     std::string executeCommand(const std::string &command);
     bool executeCommandWithResult(const std::string &command);
+    /*
+     * 解码十六进制字符串,解决中文编码问题
+     * @param hexString 十六进制字符串
+     * @return 解码后的字符串
+     */
+    std::string decodeHexString(const std::string &hexString);
 
     bool enableInterface(const std::string &iface);
     bool disableInterface(const std::string &iface);

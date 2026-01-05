@@ -884,18 +884,18 @@ void displayNetworks(const std::vector<NetworkInfo> &networks)
 {
     std::cout << "\n=== 可用网络列表 ===" << std::endl;
     std::cout << std::setw(3) << "序号"
-              << std::setw(20) << "SSID"
+              << std::setw(30) << "SSID"
               << std::setw(23) << "信号强度"
               << std::setw(11) << "信道"
               << std::setw(11) << "频率"
               << std::setw(16) << "BSSID" << std::endl;
-    std::cout << std::string(85, '-') << std::endl;
+    std::cout << std::string(95, '-') << std::endl;
 
     for (size_t i = 0; i < networks.size(); ++i)
     {
         const auto &network = networks[i];
         std::cout << std::setw(3) << i + 1
-                  << std::setw(25) << (network.ssid.empty() ? "[隐藏网络]" : network.ssid.substr(0, 24))
+                  << std::setw(35) << (network.ssid.empty() ? "[隐藏网络]" : network.ssid)
                   << std::setw(10) << network.signalStrength << " dBm"
                   << std::setw(8) << network.channel
                   << std::setw(10) << network.frequency << "MHz"
@@ -1738,8 +1738,15 @@ int main()
     int choice;
 
     std::cout << " === WiFi接口测试程序 === " << std::endl;
+#ifdef _WIN32
+    std::cout << "STA接口: Wi-Fi" << std::endl;
+    std::cout << "AP接口: Microsoft Wi-Fi Direct Virtual Adapter" << std::endl;
+#else
+    std::cout << "STA接口: wlan0" << std::endl;
+    std::cout << "AP接口: wlan1" << std::endl;
+#endif // _WIN32
     WifiMode currentMode = wifi.getCurrentMode();
-    std::cout << "当前工作模式: ";
+    std::cout << "当前开启的工作模式为:";
     switch (currentMode)
     {
     case WifiMode::WIFI_MODE_STA:
@@ -1760,13 +1767,6 @@ int main()
     }
 
     std::cout << "WiFi接口初始化成功" << std::endl;
-#ifdef _WIN32
-    std::cout << "STA接口: Wi-Fi" << std::endl;
-    std::cout << "AP接口: Microsoft Wi-Fi Direct Virtual Adapter" << std::endl;
-#else
-    std::cout << "STA接口: wlan0" << std::endl;
-    std::cout << "AP接口: wlan1" << std::endl;
-#endif // _WIN32
     std::cout << "MAC地址: " << wifi.getMACAddress() << std::endl;
 
     while (true)
@@ -1795,15 +1795,39 @@ int main()
         switch (choice)
         {
         case 1:
-            staModeMenu(wifi);
+            if (currentMode == WifiMode::WIFI_MODE_ALL_OFF)
+            {
+                std::cout << "当前处于全关闭模式，无法使用STA功能" << std::endl;
+                std::cout << "请先选择\"5.切换工作模式\"切换到STA模式" << std::endl;
+            }
+            else
+            {
+                staModeMenu(wifi);
+            }
             break;
 
         case 2:
-            apModeMenu(wifi);
+            if (currentMode == WifiMode::WIFI_MODE_ALL_OFF)
+            {
+                std::cout << "当前处于全关闭模式，无法使用AP功能" << std::endl;
+                std::cout << "请先选择\"5.切换工作模式\"切换到AP模式" << std::endl;
+            }
+            else
+            {
+                apModeMenu(wifi);
+            }
             break;
 
         case 3:
-            apStaModeMenu(wifi);
+            if (currentMode == WifiMode::WIFI_MODE_ALL_OFF)
+            {
+                std::cout << "当前处于全关闭模式，无法使用AP+STA功能" << std::endl;
+                std::cout << "请先选择\"5.切换工作模式\"切换到AP+STA模式" << std::endl;
+            }
+            else
+            {
+                apStaModeMenu(wifi);
+            }
             break;
 
         case 4:
