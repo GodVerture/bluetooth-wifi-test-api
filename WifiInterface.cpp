@@ -1152,6 +1152,68 @@ std::string WifiInterface::getIPAddress()
     return "192.168.0.1";
 #endif // _WIN32
 }
+
+std::string WifiInterface::getSubnetMask()
+{
+#ifndef _WIN32
+    std::string command = "ip addr show " + staInterface_ + " | grep 'inet' | awk '{print $2}' | cut -d/ -f2";
+    std::string mask = executeCommand(command);
+
+    if (!mask.empty() && mask.back() == '\n')
+    {
+        mask.pop_back();
+    }
+    // 将CIDR掩码转换为点分十进制格式
+    if (!mask.empty())
+    {
+        try
+        {
+            int cidr = std::stoi(mask);
+            if (cidr >= 0 && cidr <= 32)
+            {
+                uint32_t subnetMask = 0xFFFFFFFF << (32 - cidr);
+                subnetMask = htonl(subnetMask);
+
+                struct in_addr addr;
+                addr.s_addr = subnetMask;
+                return std::string(inet_ntoa(addr));
+            }
+        }
+        catch (...)
+        {
+            // 转换失败，返回空字符串
+            return "";
+        }
+    }
+    return "";
+#else
+    return "255.255.255.0";
+#endif // _WIN32
+}
+
+std::string WifiInterface::getGateway()
+{
+#ifndef _WIN32
+    // 优先从默认路由表中获取网关地址
+    std::string command = "ip route show default | grep " + staInterface_ + " | awk '{print $3}'";
+    std::string gateway = executeCommand(command);
+
+    if (!gateway.empty() && gateway.back() == '\n')
+    {
+        gateway.pop_back();
+    }
+
+    // 如果没有获取到，从静态配置中获取网关地址
+    if (gateway.empty() && useStaticIP_)
+    {
+        gateway = staticIPConfig_.gateway;
+    }
+    return gateway;
+#else
+    return "192.168.0.1";
+#endif // _WIN32
+}
+
 std::string WifiInterface::getMACAddress()
 {
 #ifndef _WIN32

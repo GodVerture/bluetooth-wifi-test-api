@@ -16,6 +16,8 @@
 #else
 #include <unistd.h>
 #include <sys/wait.h>
+#include <arpa/inet.h>
+#include <netinet/in.h>
 #endif // _WIN32
 
 enum class WifiMode
@@ -199,6 +201,18 @@ public:
      * @return IP地址字符串
      */
     std::string getIPAddress();
+
+    /*
+     * 获取子网掩码
+     * @return 子网掩码字符串
+     */
+    std::string getSubnetMask();
+
+    /**
+     * 获取网关地址
+     * @return 网关地址字符串
+     */
+    std::string getGateway();
 
     /**
      * 获取MAC地址

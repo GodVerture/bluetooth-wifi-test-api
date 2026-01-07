@@ -963,6 +963,16 @@ void displayConnectionStatus(WifiInterface &wifi)
         std::cout << "状态: 未知状态" << std::endl;
         break;
     }
+
+    std::string ipAddress = wifi.getIPAddress();
+    std::string subnetMask = wifi.getSubnetMask();
+    std::string gateway = wifi.getGateway();
+    std::string macAddress = wifi.getMACAddress();
+
+    std::cout << "IP地址: " << (ipAddress.empty() ? "未分配" : ipAddress) << std::endl;
+    std::cout << "子网掩码: " << (subnetMask.empty() ? "未分配" : subnetMask) << std::endl;
+    std::cout << "网关地址: " << (gateway.empty() ? "未分配" : gateway) << std::endl;
+    std::cout << "MAC地址: " << (macAddress.empty() ? "未知" : macAddress) << std::endl;
 }
 
 void displayStaticIPConfig(WifiInterface &wifi)
@@ -1834,6 +1844,7 @@ int main()
             std::cout << "正在关闭所有WiFi服务..." << std::endl;
             if (wifi.setOperationMode(WifiMode::WIFI_MODE_ALL_OFF))
             {
+                currentMode = WifiMode::WIFI_MODE_ALL_OFF;
                 std::cout << "所有WiFi服务已关闭" << std::endl;
             }
             else
@@ -1895,6 +1906,7 @@ int main()
 
             if (wifi.setOperationMode(newMode))
             {
+                currentMode = wifi.getCurrentMode();
                 std::cout << "工作模式切换成功" << std::endl;
             }
             else
