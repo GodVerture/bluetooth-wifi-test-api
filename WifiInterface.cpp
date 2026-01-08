@@ -26,26 +26,6 @@ WifiInterface::WifiInterface(const std::string &staInterface, const std::string 
 
 WifiInterface::~WifiInterface()
 {
-#ifndef _WIN32
-    if (connectionStatus_ == ConnectionStatus::CONNECTED)
-    {
-        disconnect();
-    }
-
-    if (isAPRunning_)
-    {
-        stopAP();
-    }
-
-    if (wpaSupplicantPid_ > 0)
-    {
-        stopWpaSupplicant();
-    }
-
-    disableSTAInterface();
-    disableAPInterface();
-
-#endif // _WIN32
 }
 std::string WifiInterface::executeCommand(const std::string &command)
 {
@@ -231,18 +211,6 @@ bool WifiInterface::setOperationMode(WifiMode mode)
         enableSTAInterface();
         disableAPInterface();
         success = startWpaSupplicant();
-        if (success)
-        {
-            sleep(2);
-            if (autoConnectToSavedNetworks())
-            {
-                std::cout << "Auto connect to saved networks success." << std::endl;
-            }
-            else
-            {
-                std::cout << "Auto connect to saved networks failed." << std::endl;
-            }
-        }
         break;
     case WifiMode::WIFI_MODE_AP:
         // 启用AP接口，禁用STA接口
@@ -255,18 +223,6 @@ bool WifiInterface::setOperationMode(WifiMode mode)
         enableAPInterface();
         enableSTAInterface();
         success = startAP() && startWpaSupplicant();
-        if (success)
-        {
-            sleep(2);
-            if (autoConnectToSavedNetworks())
-            {
-                std::cout << "Auto connect to saved networks success." << std::endl;
-            }
-            else
-            {
-                std::cout << "Auto connect to saved networks failed." << std::endl;
-            }
-        }
         break;
     case WifiMode::WIFI_MODE_ALL_OFF:
         // 关闭WiFi所有服务
@@ -503,6 +459,148 @@ bool WifiInterface::parseScanResults(const std::string &scanOutput)
     return !scanResults_.empty();
 #else
     return true;
+#endif // _WIN32
+}
+
+std::vector<NetworkInfo> WifiInterface::parseScanResultsWithoutFiltering(const std::string &scanOutput)
+{
+#ifndef _WIN32
+    std::vector<NetworkInfo> allNetworks;
+
+    std::istringstream stream(scanOutput);
+    std::string line;
+    NetworkInfo currentNetwork;
+    bool hasNetwork = false;
+
+    // 由于iw scan出来的设备有重复的，因此需要去重，只保留信号最强的网络
+    std::map<std::string, NetworkInfo> uniqueNetworks;
+
+    while (std::getline(stream, line))
+    {
+        // 去除行首尾的空格
+        line.erase(0, line.find_first_not_of(" \t"));
+        line.erase(line.find_last_not_of(" \t") + 1);
+
+        if (line.find("BSS") == 0) // 以BSS开头的行
+        {
+            // 新的网络开始，保存前一个网络
+            if (hasNetwork && !currentNetwork.ssid.empty())
+            {
+                // 去重:只保留信号最强的网络
+                auto it = uniqueNetworks.find(currentNetwork.ssid);
+                if (it == uniqueNetworks.end() ||
+                    currentNetwork.signalStrength > it->second.signalStrength)
+                {
+                    uniqueNetworks[currentNetwork.ssid] = currentNetwork;
+                }
+            }
+            currentNetwork = NetworkInfo();
+            hasNetwork = false;
+
+            // 提取BSSID
+            std::regex bssRegex("BSS\\s+([0-9a-f:]+)");
+            std::smatch match;
+            if (std::regex_search(line, match, bssRegex))
+            {
+                currentNetwork.bssid = match[1];
+            }
+        }
+        else if (line.find("freq:") != std::string::npos)
+        {
+            // 提取频率
+            std::regex freqRegex("freq:\\s*([0-9]+)");
+            std::smatch match;
+            if (std::regex_search(line, match, freqRegex))
+            {
+                currentNetwork.frequency = std::stoi(match[1]);
+                // 根据频率计算信道
+                if (currentNetwork.frequency >= 2412 && currentNetwork.frequency <= 2484)
+                {
+                    currentNetwork.channel = (currentNetwork.frequency - 2412) / 5 + 1;
+                }
+                else if (currentNetwork.frequency >= 5180 && currentNetwork.frequency <= 5825)
+                {
+                    currentNetwork.channel = (currentNetwork.frequency - 5180) / 5 + 36;
+                }
+            }
+        }
+        else if (line.find("signal:") != std::string::npos)
+        {
+            // 提取信号强度
+            std::regex signalRegex("signal:\\s*(-?[0-9]+\\.[0-9]+)");
+            std::smatch match;
+            if (std::regex_search(line, match, signalRegex))
+            {
+                // 将浮点数转换为整数(取整)
+                float signalFloat = std::stof(match[1]);
+                currentNetwork.signalStrength = static_cast<int>(signalFloat);
+            }
+            else
+            {
+                // 如果没有小数点，则匹配整数
+                std::regex signalRegexInt("signal:\\s*(-?[0-9]+)");
+                std::smatch matchInt;
+                if (std::regex_search(line, matchInt, signalRegexInt))
+                {
+                    currentNetwork.signalStrength = std::stoi(matchInt[1]);
+                }
+            }
+        }
+        else if (line.find("SSID:") != std::string::npos)
+        {
+            // 提取SSID
+            size_t pos = line.find("SSID:") + 5;
+            currentNetwork.ssid = line.substr(pos);
+
+            currentNetwork.ssid.erase(0, currentNetwork.ssid.find_first_not_of(" \t"));
+            currentNetwork.ssid.erase(currentNetwork.ssid.find_last_not_of(" \t") + 1);
+            // 处理中文编码问题
+            if (currentNetwork.ssid.find("\\x") != std::string::npos)
+            {
+                currentNetwork.ssid = decodeHexString(currentNetwork.ssid);
+            }
+            hasNetwork = true;
+
+            // 默认设置为开放网络模式
+            currentNetwork.security = SecurityMode::OPEN;
+        }
+        else if (line.find("WPA") != std::string::npos || line.find("RSN") != std::string::npos)
+        {
+            if (line.find("WPA2") != std::string::npos || line.find("RSN") != std::string::npos)
+            {
+                currentNetwork.security = SecurityMode::WPA2_PSK;
+            }
+            else if (line.find("WPA") != std::string::npos)
+            {
+                currentNetwork.security = SecurityMode::WPA_PSK;
+            }
+        }
+        else if (line.find("WEP") != std::string::npos)
+        {
+            currentNetwork.security = SecurityMode::WEP;
+        }
+    }
+
+    // 保存最后一个网络
+    if (hasNetwork && !currentNetwork.ssid.empty())
+    {
+        auto it = uniqueNetworks.find(currentNetwork.ssid);
+        if (it == uniqueNetworks.end() ||
+            currentNetwork.signalStrength > it->second.signalStrength)
+        {
+            uniqueNetworks[currentNetwork.ssid] = currentNetwork;
+        }
+    }
+
+    // 将去重后的网络添加到结果列表（不进行已保存网络过滤）
+    for (const auto &pair : uniqueNetworks)
+    {
+        allNetworks.push_back(pair.second);
+    }
+
+    return allNetworks;
+#else
+    return std::vector<NetworkInfo>();
 #endif // _WIN32
 }
 
@@ -909,13 +1007,95 @@ bool WifiInterface::disconnect()
 
 NetworkInfo WifiInterface::getCurrentNetwork()
 {
+#ifndef _WIN32
+    std::string command = "iw dev " + staInterface_ + " link";
+    std::string linkStatus = executeCommand(command);
+
+    if (linkStatus.find("Connected") == std::string::npos)
+    {
+        // 没有WiFi连接，返回空网络信息
+        NetworkInfo emptyNetwork;
+        emptyNetwork.ssid = "";
+        emptyNetwork.signalStrength = -100;
+        emptyNetwork.security = SecurityMode::OPEN;
+        emptyNetwork.channel = 0;
+        emptyNetwork.isHidden = false;
+        emptyNetwork.bssid = "";
+        emptyNetwork.frequency = 0;
+        return emptyNetwork;
+    }
+
+    std::string ssid;
+    size_t ssidPos = linkStatus.find("SSID: ");
+    if (ssidPos != std::string::npos)
+    {
+        size_t endPos = linkStatus.find("\n", ssidPos);
+        if (endPos != std::string::npos)
+        {
+            ssid = linkStatus.substr(ssidPos + 6, endPos - ssidPos - 6);
+            ssid.erase(0, ssid.find_first_not_of(" \t"));
+            ssid.erase(ssid.find_last_not_of(" \t") + 1);
+        }
+    }
+
+    // 如果没有找到SSID，说明可能没有WiFi连接（只有静态IP）
+    if (ssid.empty())
+    {
+        NetworkInfo emptyNetwork;
+        emptyNetwork.ssid = "";
+        emptyNetwork.signalStrength = -100;
+        emptyNetwork.security = SecurityMode::OPEN;
+        emptyNetwork.channel = 0;
+        emptyNetwork.isHidden = false;
+        emptyNetwork.bssid = "";
+        emptyNetwork.frequency = 0;
+        return emptyNetwork;
+    }
+
+    // 获取信号强度
+    int signalStrength = getSignalStrength();
+
+    NetworkInfo currentNetwork;
+    currentNetwork.ssid = ssid;
+    currentNetwork.signalStrength = signalStrength;
+
+    for (const auto &network : scanResults_)
+    {
+        if (network.ssid == ssid)
+        {
+            currentNetwork = network;
+            break;
+        }
+    }
+
+    currentNetwork_ = currentNetwork;
+
+    return currentNetwork;
+#else
     return currentNetwork_;
+#endif // _WIN32
 }
 
 std::vector<NetworkInfo> WifiInterface::getSavedNetworks()
 {
 #ifndef _WIN32
     std::vector<NetworkInfo> networks;
+    std::string command = "iw dev " + staInterface_ + " scan | grep -E \"^BSS|SSID:|signal:|freq:|WPA|RSN|WEP\"";
+    std::string scanOutput = executeCommand(command);
+
+    if (scanOutput.empty())
+    {
+        std::cout << "Warning: Network scan failed, cannot determine available saved networks" << std::endl;
+        return networks;
+    }
+
+    std::vector<NetworkInfo> allNetworks = parseScanResultsWithoutFiltering(scanOutput);
+
+    if (allNetworks.empty())
+    {
+        // 没有扫描到任何网络，返回空列表
+        return networks;
+    }
 
     for (const auto &network : savedNetworks_)
     {
@@ -925,7 +1105,23 @@ std::vector<NetworkInfo> WifiInterface::getSavedNetworks()
         {
             info.autoConnect = autoConnectIt->second;
         }
-        networks.push_back(info);
+        // 检查网络是否在当前范围内
+        bool isInRange = false;
+        for (const auto &scannedNetwork : allNetworks)
+        {
+            if (scannedNetwork.ssid == network.ssid)
+            {
+                isInRange = true;
+                info.signalStrength = scannedNetwork.signalStrength;
+                break;
+            }
+        }
+
+        // 只有当网络在范围内时才添加到返回列表
+        if (isInRange)
+        {
+            networks.push_back(info);
+        }
     }
 
     return networks;
@@ -933,6 +1129,7 @@ std::vector<NetworkInfo> WifiInterface::getSavedNetworks()
     return std::vector<NetworkInfo>();
 #endif // _WIN32
 }
+
 bool WifiInterface::forgetNetwork(const std::string &ssid)
 {
 #ifndef _WIN32
@@ -1046,7 +1243,6 @@ bool WifiInterface::autoConnectToSavedNetworks()
 {
 #ifndef _WIN32
     std::cout << "Trying to automatically connect to a saved network..." << std::endl;
-
     auto savedNetworks = getSavedNetworks();
     if (savedNetworks.empty())
     {

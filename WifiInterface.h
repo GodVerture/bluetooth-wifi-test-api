@@ -331,7 +331,18 @@ private:
     bool enableAPInterface();
     bool disableSTAInterface();
     bool disableAPInterface();
+    /*
+     * 解析扫描结果并过滤已保存网络
+     * @param scanOutput 扫描输出
+     * @return 过滤后的网络列表（不包括已保存的）
+     */
     bool parseScanResults(const std::string &scanOutput);
+    /**
+     * 解析扫描结果但不进行已保存网络过滤
+     * @param scanOutput 扫描输出
+     * @return 所有网络列表（包括已保存的）
+     */
+    std::vector<NetworkInfo> parseScanResultsWithoutFiltering(const std::string &scanOutput);
     bool startWpaSupplicant();
     bool stopWpaSupplicant();
     bool startHostapd();

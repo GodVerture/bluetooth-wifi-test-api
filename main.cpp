@@ -906,23 +906,26 @@ void displayNetworks(const std::vector<NetworkInfo> &networks)
 void displaySavedNetworks(WifiInterface &wifi)
 {
     auto savedNetworks = wifi.getSavedNetworks();
-    std::cout << "\n=== 已保存的网络列表 ===" << std::endl;
-    std::cout << std::setw(3) << "序号"
-              << std::setw(20) << "SSID"
-              << std::setw(15) << "自动连接" << std::endl;
-    std::cout << std::string(45, '-') << std::endl;
+    std::cout << "\n=== 已保存的网络列表 (仅显示当前范围内的网络) ===" << std::endl;
 
     if (savedNetworks.empty())
     {
-        std::cout << "没有已保存的网络" << std::endl;
+        std::cout << "当前范围内没有可用的已保存网络" << std::endl;
         return;
     }
+
+    std::cout << std::setw(3) << "序号"
+              << std::setw(20) << "SSID"
+              << std::setw(15) << "信号强度"
+              << std::setw(15) << "自动连接" << std::endl;
+    std::cout << std::string(60, '-') << std::endl;
 
     for (size_t i = 0; i < savedNetworks.size(); ++i)
     {
         const auto &network = savedNetworks[i];
         std::cout << std::setw(3) << i + 1
                   << std::setw(25) << network.ssid.substr(0, 24)
+                  << std::setw(10) << network.signalStrength << " dBm"
                   << std::setw(10) << (network.autoConnect ? "是" : "否") << std::endl;
     }
 }
@@ -944,7 +947,7 @@ void displayConnectionStatus(WifiInterface &wifi)
         break;
     case ConnectionStatus::CONNECTED:
         std::cout << "状态: 已连接" << std::endl;
-        std::cout << "IP地址: " << wifi.getIPAddress() << std::endl;
+        std::cout << "wifi名称: " << wifi.getCurrentNetwork().ssid << std::endl;
         std::cout << "信号强度: " << wifi.getSignalStrength() << " dBm" << std::endl;
 
         currentNetwork = wifi.getCurrentNetwork();
@@ -1184,7 +1187,11 @@ void staModeMenu(WifiInterface &wifi)
 {
     std::string input;
     int choice;
-
+    // 如果当前未连接，尝试自动连接已保存网络
+    if (wifi.getConnectionStatus() == ConnectionStatus::DISCONNECTED)
+    {
+        wifi.autoConnectToSavedNetworks();
+    }
     while (true)
     {
         std::cout << "\n=== STA模式功能菜单 ===" << std::endl;
@@ -1899,6 +1906,9 @@ int main()
             case 3:
                 newMode = WifiMode::WIFI_MODE_AP_STA;
                 break;
+            case 4:
+                newMode = WifiMode::WIFI_MODE_ALL_OFF;
+                break;
             default:
                 std::cout << "无效选择" << std::endl;
                 continue;
@@ -1907,6 +1917,7 @@ int main()
             if (wifi.setOperationMode(newMode))
             {
                 currentMode = wifi.getCurrentMode();
+
                 std::cout << "工作模式切换成功" << std::endl;
             }
             else
