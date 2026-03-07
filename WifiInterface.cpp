@@ -140,7 +140,7 @@ bool WifiInterface::enableAPInterface()
     stopHostapd();
 
     disableInterface(apInterface_);
-    sleep(1); // 确保接口完全关闭
+    usleep(500000); // 确保接口完全关闭
 
     std::string setModeCommand = "iw dev " + apInterface_ + " set type __ap";
     if (!executeCommandWithResult(setModeCommand))
@@ -153,7 +153,7 @@ bool WifiInterface::enableAPInterface()
         std::cout << "Error: Failed to enable AP interface " << apInterface_ << std::endl;
         return false;
     }
-    sleep(2); // 等待接口完全启动
+    usleep(500000); // 等待接口完全启动
 
     std::string cleanupCommand = "ip addr del 192.168.7.1/24 dev " + apInterface_ + " 2>/dev/null";
     executeCommandWithResult(cleanupCommand);
@@ -292,7 +292,8 @@ Todo:
 bool WifiInterface::scanNetworks()
 {
 #ifndef _WIN32
-    if (!enableSTAInterface())
+    // 确保sta处于启用状态，不重置IP配置
+    if (!enableInterface(staInterface_))
     {
         std::cout << "Error: Failed to enable interface " << staInterface_ << std::endl;
         return false;
@@ -617,7 +618,7 @@ bool WifiInterface::stopWpaSupplicant()
     std::string cleanupCommand = "rm -f /var/run/wpa_supplicant/" + staInterface_;
     executeCommandWithResult(cleanupCommand);
 
-    sleep(1); // 等待进程完全停止
+    usleep(100000); // 等待进程完全停止
 
     // 再次检查是否还有wpa_supplicant进程在运行
     std::string checkCommand = "ps | grep wpa_supplicant | grep -v grep";
@@ -638,8 +639,6 @@ bool WifiInterface::stopWpaSupplicant()
 bool WifiInterface::startWpaSupplicant()
 {
 #ifndef _WIN32
-    stopWpaSupplicant();
-
     std::string cleanupCommand = "rm -f /var/run/wpa_supplicant/" + staInterface_;
     executeCommandWithResult(cleanupCommand);
 
@@ -1035,6 +1034,12 @@ NetworkInfo WifiInterface::getCurrentNetwork()
             ssid = linkStatus.substr(ssidPos + 6, endPos - ssidPos - 6);
             ssid.erase(0, ssid.find_first_not_of(" \t"));
             ssid.erase(ssid.find_last_not_of(" \t") + 1);
+
+            // 处理中文编码问题
+            if (ssid.find("\\x") != std::string::npos)
+            {
+                ssid = decodeHexString(ssid);
+            }
         }
     }
 
@@ -1521,14 +1526,6 @@ APConfig WifiInterface::getAPConfig()
 bool WifiInterface::startAP()
 {
 #ifndef _WIN32
-    if (isAPRunning_)
-    {
-        std::cout << "The AP service is already running, stop it first..." << std::endl;
-        stopAP();
-    }
-
-    std::cout << "Starting AP mode with enhanced safety measures..." << std::endl;
-
     // 保存当前网络状态
     std::string saveRoute = "route -n > /tmp/route_backup.txt 2>/dev/null";
     executeCommandWithResult(saveRoute);
@@ -1602,7 +1599,7 @@ bool WifiInterface::startAP()
         return false;
     }
 
-    sleep(3); // 等待hostapd完全启动
+    usleep(500000); // 等待hostapd完全启动
 
     // 检查hostapd是否正常运行
     std::string checkCommand = "ps | grep hostapd | grep -v grep";
@@ -1652,7 +1649,7 @@ bool WifiInterface::startDHCPServer()
     std::string command = "dnsmasq -C /etc/dnsmasq.conf";
     if (executeCommandWithResult(command))
     {
-        sleep(2);
+        usleep(500000); // 等待dnsmasq完全启动
 
         // 检查dnsmasq是否运行
         std::string checkCommand = "ps | grep dnsmasq | grep -v grep";
@@ -1779,7 +1776,7 @@ bool WifiInterface::startHostapdSafe()
     std::string command = "setsid hostapd /etc/hostapd.conf -B > /dev/null 2>&1";
     if (executeCommandWithResult(command))
     {
-        sleep(3); // 等待hostapd启动
+        usleep(500000); // 等待hostapd启动
 
         // 检查hostapd是否正常运行
         std::string checkCommand = "ps | grep hostapd | grep -v grep";
@@ -1806,7 +1803,7 @@ bool WifiInterface::startHostapdSafe()
     std::string altCommand = "hostapd -B /etc/hostapd.conf";
     if (executeCommandWithResult(altCommand))
     {
-        sleep(2);
+        usleep(500000); // 等待hostapd启动
         std::string checkCommand = "ps | grep hostapd | grep -v grep";
         std::string checkResult = executeCommand(checkCommand);
         if (!checkResult.empty())
@@ -1896,7 +1893,7 @@ bool WifiInterface::stopHostapd()
     std::string command = "killall hostapd 2>/dev/null &";
     executeCommandWithResult(command);
 
-    sleep(1); // 等待进程停止
+    // sleep(1); // 等待进程停止
 
     // 检查进程是否已停止
     checkResult = executeCommand(checkCommand);
@@ -1912,7 +1909,7 @@ bool WifiInterface::stopHostapd()
     std::string forceCommand = "killall -9 hostapd 2>/dev/null &";
     executeCommandWithResult(forceCommand);
 
-    sleep(1); // 等待强制停止完成
+    // sleep(1); // 等待强制停止完成
 
     // 再次检查进程是否已停止
     checkResult = executeCommand(checkCommand);
@@ -1964,7 +1961,7 @@ bool WifiInterface::stopAP()
     executeCommandWithResult(cleanupForward1);
     executeCommandWithResult(cleanupForward2);
 
-    sleep(2); // 等待清理操作完成
+    usleep(100000); // 等待清理操作完成
 
     if (!disableInterface(apInterface_))
     {
