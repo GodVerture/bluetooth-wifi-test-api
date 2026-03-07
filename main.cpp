@@ -4,8 +4,8 @@
 #include <string>
 #include <iomanip>
 
-#define WIFI_TEST
-// #define BLUE_TEST
+// #define WIFI_TEST
+#define BLUE_TEST
 
 #ifdef WIFI_TEST
 #include "WifiInterface.h"
@@ -48,14 +48,12 @@ void displaySavedDevices(BlueInterface &blue)
 {
     auto savedDevices = blue.getSavedDevices();
     auto pairedDevices = blue.getPairedDevices();
-
+    auto connectedDevices = blue.getConnectedDevices();
     if (savedDevices.empty() && pairedDevices.empty())
     {
         std::cout << "没有已保存或已配对的设备。" << std::endl;
         return;
     }
-
-    std::cout << "\n=== 已配对设备管理2 ===" << std::endl;
 
     if (!pairedDevices.empty())
     {
@@ -63,10 +61,24 @@ void displaySavedDevices(BlueInterface &blue)
         for (size_t i = 0; i < pairedDevices.size(); ++i)
         {
             const auto &device = pairedDevices[i];
-            bool isConnected = blue.isDeviceConnected(device.address);
+
+            // 检查设备是否已连接
+            bool isConnected = false;
+            std::string connectedDeviceName = device.name;
+
+            for (const auto &connectedDevice : connectedDevices)
+            {
+                if (connectedDevice.address == device.address)
+                {
+                    isConnected = true;
+                    connectedDeviceName = connectedDevice.name; // 使用已连接设备的名称
+                    break;
+                }
+            }
+
             bool autoConnect = blue.getAutoConnectStatus(device.address);
 
-            std::cout << i + 1 << ". " << device.name << " (" << device.address << ")" << std::endl;
+            std::cout << i + 1 << ". " << connectedDeviceName << " (" << device.address << ")" << std::endl;
             std::cout << "   状态: " << (isConnected ? "已连接" : "未连接")
                       << " | 自动连接: " << (autoConnect ? "启用" : "禁用") << std::endl;
         }
@@ -407,7 +419,20 @@ void bluetoothDeviceManagement(BlueInterface &blue)
     while (true)
     {
         auto devices = blue.getScanResults();
+        auto connectedDevices = blue.getConnectedDevices();
         displayBluetoothDevices(devices);
+
+        // 显示已连接设备
+        if (!connectedDevices.empty())
+        {
+            std::cout << "\n=== 已连接设备 ===" << std::endl;
+            for (size_t i = 0; i < connectedDevices.size(); ++i)
+            {
+                const auto &device = connectedDevices[i];
+                std::cout << i + 1 << ". " << device.name << " (" << device.address << ")" << std::endl;
+            }
+        }
+
         std::cout << "\n=== 蓝牙设备管理 ===" << std::endl;
         std::cout << "1. 扫描蓝牙设备" << std::endl;
         std::cout << "2. 配对设备" << std::endl;
@@ -418,6 +443,7 @@ void bluetoothDeviceManagement(BlueInterface &blue)
         std::cout << "7. 设置自动连接" << std::endl;
         std::cout << "8. 管理已配对设备" << std::endl;
         std::cout << "9. 自动连接已配对设备" << std::endl;
+        std::cout << "10. 查看已连接设备" << std::endl;
         std::cout << "0. 返回主菜单" << std::endl;
         std::cout << "请选择操作: ";
 
@@ -717,6 +743,25 @@ void bluetoothDeviceManagement(BlueInterface &blue)
                 std::cout << "自动连接失败" << std::endl;
             }
             break;
+
+        case 10:
+        {
+            auto currentConnectedDevices = blue.getConnectedDevices();
+            if (currentConnectedDevices.empty())
+            {
+                std::cout << "当前没有已连接的设备。" << std::endl;
+            }
+            else
+            {
+                std::cout << "\n=== 当前已连接设备 ===" << std::endl;
+                for (size_t i = 0; i < currentConnectedDevices.size(); ++i)
+                {
+                    const auto &device = currentConnectedDevices[i];
+                    std::cout << i + 1 << ". " << device.name << " (" << device.address << ")" << std::endl;
+                }
+            }
+        }
+        break;
 
         case 0:
             return;

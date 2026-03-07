@@ -720,14 +720,14 @@ bool BlueInterface::connectToDevice(const BluetoothDevice &device)
             if (dev.address == device.address)
             {
                 dev.isConnected = true;
-                dev.autoConnect = true;
+                // dev.autoConnect = true;
                 break;
             }
         }
 
         // 保存自动连接设置
-        autoConnectDevices_[device.address] = true;
-        saveDeviceConfig();
+        // autoConnectDevices_[device.address] = true;
+        // saveDeviceConfig();
         sleep(1); // 等待1秒确保连接完成
         std::cout << "Connection successful to device " << device.address << std::endl;
         return true;
@@ -764,6 +764,30 @@ bool BlueInterface::disconnectDevice(const BluetoothDevice &device)
                 break;
             }
         }
+
+        // 断开连接后，如果已配对的设备不在保存列表中，添加到保存列表
+        auto pairedDevices = getPairedDevices();
+        bool isPaired = false;
+        for (const auto &pairedDevice : pairedDevices)
+        {
+            if (pairedDevice.address == device.address)
+            {
+                isPaired = true;
+                break;
+            }
+        }
+        if (isPaired)
+        {
+            // 检查设备是否已经在保存列表中
+            auto it = autoConnectDevices_.find(device.address);
+            if (it == autoConnectDevices_.end())
+            {
+                // 设备不在保存列表中，添加到保存列表[默认不自动连接]
+                autoConnectDevices_[device.address] = false;
+                saveDeviceConfig();
+                std::cout << "Device " << device.address << " has been added to saved devices list." << std::endl;
+            }
+        }
         return true;
     }
     return false;
@@ -776,11 +800,87 @@ std::vector<BluetoothDevice> BlueInterface::getConnectedDevices()
 {
     std::vector<BluetoothDevice> connectedDevices;
 #ifndef _WIN32
-    for (const auto &device : scanResults_)
+    // 通过系统命令实时获取已连接设备
+    std::string connectedCommand = "bluetoothctl -- info | grep -E 'Device|Name|Alias|Connected: yes'";
+    std::string connectedOutput = executeCommand(connectedCommand);
+
+    std::istringstream iss(connectedOutput);
+    std::string line;
+    BluetoothDevice currentDevice;
+    std::string currentAddress;
+
+    while (std::getline(iss, line))
     {
-        if (device.isConnected)
+        if (line.find("Device") == 0)
         {
-            connectedDevices.push_back(device);
+            // 解析设备地址
+            std::istringstream lineStream(line);
+            std::string token;
+            lineStream >> token; // 跳过 "Device"
+            if (lineStream >> token)
+            {
+                currentAddress = token;
+                currentDevice.address = currentAddress;
+                currentDevice.name = "unknown"; // 默认名称
+            }
+        }
+        else if (line.find("Name:") != std::string::npos)
+        {
+            // 获取设备名称
+            size_t pos = line.find("Name:");
+            if (pos != std::string::npos)
+            {
+                std::string name = line.substr(pos + 5); // 跳过 "Name:"
+                size_t start = name.find_first_not_of(" \t");
+                size_t end = name.find_last_not_of(" \t");
+                if (start != std::string::npos && end != std::string::npos)
+                {
+                    currentDevice.name = name.substr(start, end - start + 1);
+                }
+            }
+        }
+        else if (line.find("Alias:") != std::string::npos)
+        {
+            // 获取设备别名
+            size_t pos = line.find("Alias:");
+            if (pos != std::string::npos)
+            {
+                std::string alias = line.substr(pos + 6); // 跳过 "Alias:"
+                size_t start = alias.find_first_not_of(" \t");
+                size_t end = alias.find_last_not_of(" \t");
+                if (start != std::string::npos && end != std::string::npos)
+                {
+                    std::string aliasName = alias.substr(start, end - start + 1);
+                    // 如果别名不是默认值，使用别名
+                    if (aliasName != "unknown" && aliasName != currentDevice.name)
+                    {
+                        currentDevice.name = aliasName;
+                    }
+                }
+            }
+        }
+        else if (line.find("Connected: yes") != std::string::npos && !currentAddress.empty())
+        {
+            currentDevice.isConnected = true;
+            currentDevice.isPaired = true;
+            currentDevice.autoConnect = false;
+
+            // 如果名称仍然是unknown，尝试从已配对设备中获取名称
+            if (currentDevice.name == "unknown")
+            {
+                auto pairedDevices = getPairedDevices();
+                for (const auto &pairedDevice : pairedDevices)
+                {
+                    if (pairedDevice.address == currentAddress)
+                    {
+                        currentDevice.name = pairedDevice.name;
+                        break;
+                    }
+                }
+            }
+
+            connectedDevices.push_back(currentDevice);
+            currentAddress.clear(); // 重置当前地址
         }
     }
 #endif
@@ -790,6 +890,16 @@ std::vector<BluetoothDevice> BlueInterface::getConnectedDevices()
 bool BlueInterface::isDeviceConnected(const std::string &deviceAddress)
 {
 #ifndef _WIN32
+    // 通过系统命令实时检测连接状态
+    std::string connectedCommand = "bluetoothctl -- info " + deviceAddress + " | grep 'Connected: yes'";
+    std::string connectedOutput = executeCommand(connectedCommand);
+
+    if (!connectedOutput.empty())
+    {
+        return true;
+    }
+
+    // 如果系统命令检测不到，再从扫描结果中查找
     for (const auto &dev : scanResults_)
     {
         if (dev.address == deviceAddress)
@@ -798,10 +908,7 @@ bool BlueInterface::isDeviceConnected(const std::string &deviceAddress)
         }
     }
 
-    std::string connectedCommand = "bluetoothctl -- info " + deviceAddress + " | grep 'Connected: yes'";
-    std::string connectedOutput = executeCommand(connectedCommand);
-
-    return !connectedOutput.empty();
+    return false;
 #endif
     return false;
 }
@@ -1058,57 +1165,31 @@ std::vector<BluetoothDevice> BlueInterface::getSavedDevices()
 {
     std::vector<BluetoothDevice> savedDevices;
 #ifndef _WIN32
-    // 从自动连接配置中获取已保存的设备
-    for (const auto &pair : autoConnectDevices_)
+    // 已保存设备 = 已配对但未连接的设备
+    auto pairedDevices = getPairedDevices();
+
+    for (const auto &pairedDevice : pairedDevices)
     {
-        BluetoothDevice device;
-        device.address = pair.first;
-        device.autoConnect = pair.second;
+        // 检查设备是否已连接
+        bool isConnected = isDeviceConnected(pairedDevice.address);
 
-        // 检查设备是否仍然存在（已配对或可扫描到）
-        bool deviceExists = false;
-
-        // 检查扫描结果
-        for (const auto &scannedDevice : scanResults_)
+        if (!isConnected)
         {
-            if (scannedDevice.address == device.address)
+            BluetoothDevice savedDevice = pairedDevice;
+            savedDevice.isConnected = false;
+
+            // 检查自动连接设置
+            auto it = autoConnectDevices_.find(pairedDevice.address);
+            if (it != autoConnectDevices_.end())
             {
-                device.name = scannedDevice.name;
-                deviceExists = true;
-                break;
+                savedDevice.autoConnect = it->second;
             }
-        }
-
-        // 如果扫描结果中没有，检查已配对设备
-        if (!deviceExists)
-        {
-            auto pairedDevices = getPairedDevices();
-            for (const auto &pairedDevice : pairedDevices)
+            else
             {
-                if (pairedDevice.address == device.address)
-                {
-                    device.name = pairedDevice.name;
-                    deviceExists = true;
-                    break;
-                }
+                savedDevice.autoConnect = false;
             }
-        }
 
-        // 如果设备仍然存在，添加到返回列表
-        if (deviceExists)
-        {
-            // 如果仍然没有名称，使用默认名称
-            if (device.name.empty())
-            {
-                device.name = "Unknown Device";
-            }
-            savedDevices.push_back(device);
-        }
-        else
-        {
-            // 设备已不存在，从配置中移除
-            autoConnectDevices_.erase(pair.first);
-            saveDeviceConfig();
+            savedDevices.push_back(savedDevice);
         }
     }
 #endif // _WIN32
