@@ -256,7 +256,30 @@ WifiMode WifiInterface::detectActualMode()
     bool wlan0Up = !wlan0Result.empty() && wlan0Result.find('1') != std::string::npos;
     bool wlan1Up = !wlan1Result.empty() && wlan1Result.find('1') != std::string::npos;
 
-    if (wlan0Up && wlan1Up)
+    // 检查hostapd服务是否实际运行
+    std::string hostapdCheck = "pidof hostapd 2>/dev/null && echo '1'";
+    std::string hostapdResult = executeCommand(hostapdCheck);
+    bool hostapdRunning = !hostapdResult.empty() && hostapdResult.find('1') != std::string::npos;
+
+    // 检查wpa_supplicant服务是否实际运行
+    std::string wpaCheck = "pidof wpa_supplicant 2>/dev/null && echo '1'";
+    std::string wpaResult = executeCommand(wpaCheck);
+    bool wpaRunning = !wpaResult.empty() && wpaResult.find('1') != std::string::npos;
+
+    // 根据实际服务运行状态判断工作模式
+    if (hostapdRunning && wpaRunning)
+    {
+        return WifiMode::WIFI_MODE_AP_STA;
+    }
+    else if (wpaRunning)
+    {
+        return WifiMode::WIFI_MODE_STA;
+    }
+    else if (hostapdRunning)
+    {
+        return WifiMode::WIFI_MODE_AP;
+    }
+    else if (wlan0Up && wlan1Up)
     {
         return WifiMode::WIFI_MODE_AP_STA;
     }
@@ -1510,7 +1533,18 @@ bool WifiInterface::setAPConfig(const APConfig &config)
             std::cout << "Error: Failed to configure hostapd" << std::endl;
             return false;
         }
-        std::cout << "The AP configuration is saved. The new configuration will be used next time you start AP mode." << std::endl;
+        std::cout << "AP configuration saved, starting AP service..." << std::endl;
+
+        // 自动启动AP服务
+        if (startAP())
+        {
+            std::cout << "AP service started successfully with new configuration." << std::endl;
+        }
+        else
+        {
+            std::cout << "Failed to start AP service with new configuration." << std::endl;
+            return false;
+        }
     }
     return true;
 #else
@@ -1566,6 +1600,10 @@ bool WifiInterface::startAP()
         std::cout << "Error: Failed to configure hostapd" << std::endl;
         return false;
     }
+
+    std::string cleanupIPCommand = "ip addr flush dev " + apInterface_ + " 2>/dev/null";
+    executeCommandWithResult(cleanupIPCommand);
+
     // 先设置AP接口的IP地址
     std::string ipCommand = "ip addr add 192.168.7.1/24 dev " + apInterface_;
     if (!executeCommandWithResult(ipCommand))
