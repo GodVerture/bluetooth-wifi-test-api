@@ -98,23 +98,35 @@ void BlueInterface::saveDeviceConfig()
 std::string BlueInterface::executeCommand(const std::string &command)
 {
 #ifndef _WIN32
-    FILE *pipe = popen(command.c_str(), "r");
-    if (!pipe)
+    // 通过临时文件的方式解决阻塞问题
+    std::srand(std::time(nullptr));
+    std::string tempFile = "/tmp/cmd_output_" + std::to_string(std::rand()) + ".txt";
+
+    std::string fullCommand = "timeout 10s " + command + " > " + tempFile + " 2>&1";
+    system(fullCommand.c_str());
+
+    // 读取临时文件内容
+    std::string output = "";
+    FILE *file = fopen(tempFile.c_str(), "r");
+    if (file)
     {
-        return "";
+        char buffer[128];
+        while (fgets(buffer, sizeof(buffer), file) != nullptr)
+        {
+            output += buffer;
+        }
+        fclose(file);
+
+        // 删除临时文件
+        std::string cleanupCommand = "rm -f " + tempFile;
+        system(cleanupCommand.c_str());
+    }
+    else
+    {
+        output = "Error: Failed to read temporary file";
     }
 
-    char buffer[128];
-    std::string result = "";
-    while (!feof(pipe))
-    {
-        if (fgets(buffer, 128, pipe) != NULL)
-        {
-            result += buffer;
-        }
-    }
-    pclose(pipe);
-    return result;
+    return output;
 #else
     return "";
 #endif // _WIN32
