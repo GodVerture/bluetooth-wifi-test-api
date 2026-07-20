@@ -4,8 +4,8 @@
 #include <string>
 #include <iomanip>
 
-// #define WIFI_TEST
-#define BLUE_TEST
+#define WIFI_TEST
+// #define BLUE_TEST
 
 #ifdef WIFI_TEST
 #include "WifiInterface.h"

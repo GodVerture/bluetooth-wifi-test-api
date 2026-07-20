@@ -217,6 +217,8 @@ bool WifiInterface::setOperationMode(WifiMode mode)
         stopWpaSupplicant();
     }
 
+    stopUdhcpc();
+
     currentMode_ = mode;
 
     bool success = false;
@@ -670,6 +672,29 @@ bool WifiInterface::stopWpaSupplicant()
     }
 
     return false;
+#else
+    return true;
+#endif // _WIN32
+}
+
+bool WifiInterface::stopUdhcpc()
+{
+#ifndef _WIN32
+    // 正常停止udhcpc进程
+    std::string killCommand = "killall udhcpc 2>/dev/null";
+    executeCommandWithResult(killCommand);
+
+    // 强制停止
+    std::string forceKillCommand = "killall -9 udhcpc 2>/dev/null";
+    executeCommandWithResult(forceKillCommand);
+
+    usleep(100000); // 等待进程完全停止
+
+    // 检查是否还有udhcpc进程在运行
+    std::string checkCommand = "ps | grep udhcpc | grep -v grep";
+    std::string checkResult = executeCommand(checkCommand);
+
+    return checkResult.empty();
 #else
     return true;
 #endif // _WIN32

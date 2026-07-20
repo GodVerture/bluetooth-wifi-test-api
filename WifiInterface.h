@@ -344,6 +344,7 @@ private:
      */
     std::vector<NetworkInfo> parseScanResultsWithoutFiltering(const std::string &scanOutput);
     bool startWpaSupplicant();
+    bool stopUdhcpc();
     bool stopWpaSupplicant();
     bool startHostapd();
     bool startHostapdSafe();
